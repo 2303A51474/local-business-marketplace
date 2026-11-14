@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Business Marketplace & Service Booking</title>
+<style>
+:root{--pri:#4f46e5;--bg:#f4f5fb;--card:#fff;--txt:#1f2430;--mut:#6b7280;--bd:#e5e7eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--txt)}
+header{background:var(--pri);color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+header b{font-size:18px}.layout{display:flex;min-height:calc(100vh - 52px)}
+nav{width:200px;background:#fff;border-right:1px solid var(--bd);padding:10px;flex-shrink:0}
+nav a{display:block;padding:10px 12px;border-radius:8px;color:var(--txt);text-decoration:none;cursor:pointer;margin-bottom:2px}
+nav a.on,nav a:hover{background:#eef0ff;color:var(--pri);font-weight:600}
+main{flex:1;padding:18px;min-width:0}h2{margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.stat{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px}.stat small{color:var(--mut)}.stat div{font-size:24px;font-weight:700;color:var(--pri)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+form.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end}
+label{font-size:13px;color:var(--mut);display:block}input,select,textarea{width:100%;padding:9px;border:1px solid var(--bd);border-radius:8px;font:inherit;margin-top:3px}
+button{background:var(--pri);color:#fff;border:0;padding:9px 14px;border-radius:8px;cursor:pointer;font:inherit}button.s{padding:5px 9px;font-size:13px;margin:1px}
+button.g{background:var(--ok)}button.r{background:var(--bad)}button.o{background:#fff;color:var(--pri);border:1px solid var(--pri)}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--bd);white-space:nowrap}th{background:#f9fafb;color:var(--mut)}
+.b{padding:2px 9px;border-radius:99px;font-size:12px;background:#e5e7eb}.verified,.confirmed,.paid,.completed,.success{background:#dcfce7;color:#166534}.pending,.unpaid{background:#fef3c7;color:#92400e}.rejected,.cancelled{background:#fee2e2;color:#991b1b}
+.bar{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}.bar span{width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar i{display:block;height:14px;background:var(--pri);border-radius:4px}
+#toast{position:fixed;bottom:16px;right:16px;padding:12px 16px;border-radius:8px;color:#fff;display:none;z-index:9;max-width:80vw}
+.auth{max-width:400px;margin:40px auto}.mut{color:var(--mut);font-size:13px}.bar-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+@media(max-width:720px){.layout{flex-direction:column}nav{width:100%;display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--bd)}nav a{white-space:nowrap}}
+@media print{header,nav,.noprint{display:none!important}main{padding:0}}
+</style>
+</head>
+<body>
+<header><b>Local Business Marketplace</b><span id="who"></span></header>
+<div class="layout"><nav id="nav" style="display:none"></nav><main id="main"></main></div>
+<div id="toast"></div>
+<script>
+let token = localStorage.getItem('tok'), user = JSON.parse(localStorage.getItem('usr') || 'null');
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const badge = s => `<span class="b ${esc(s)}">${esc(s)}</span>`;
+const money = n => '₹' + Number(n || 0).toLocaleString('en-IN');
+function toast(m, ok = true){const t=$('#toast');t.textContent=m;t.style.background=ok?'#16a34a':'#dc2626';t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',3500)}
+async function api(p, m = 'GET', b, raw){
+  const r = await fetch('/api' + p, {method:m, headers:{'Content-Type':'application/json', ...(token ? {Authorization:'Bearer ' + token} : {})}, body:b ? JSON.stringify(b) : undefined});
+  if (raw && r.ok) return r;
+  let d = {}; try { d = await r.json() } catch(e) {}
+  if (r.status === 401 && token && !p.startsWith('/auth')) { logout(); throw new Error('Session expired. Please login again.') }
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
+}
+const act = fn => async (...a) => { try { await fn(...a) } catch(e) { toast(e.message, false) } };
+const table = (cols, rows) => !rows.length ? '<p class="mut">No records found.</p>' :
+  `<div class="tw"><table><tr>${cols.map(c => `<th>${c[0]}</th>`).join('')}</tr>${rows.map(r => `<tr>${cols.map(c => `<td>${c[1](r)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+const bars = d => { const k = Object.keys(d), m = Math.max(1, ...Object.values(d)); return k.length ? k.map(x => `<div class="bar"><span title="${esc(x)}">${esc(x)}</span><i style="width:${d[x] / m * 55}%"></i><b>${d[x]}</b></div>`).join('') : '<p class="mut">No data yet.</p>' };
+
+const MENUS = {
+  admin:[['dashboard','Dashboard'],['businesses','Businesses'],['services','Services'],['bookings','Bookings'],['payments','Payments'],['reviews','Feedback'],['reports','Reports'],['users','Users']],
+  owner:[['dashboard','Dashboard'],['businesses','My Businesses'],['services','My Services'],['bookings','Bookings'],['payments','Payments'],['reviews','Feedback'],['reports','Reports']],
+  provider:[['dashboard','Dashboard'],['bookings','My Jobs'],['reviews','Feedback']],
+  customer:[['dashboard','Dashboard'],['services','Find Services'],['bookings','My Bookings'],['payments','Payments'],['reviews','My Reviews']]
+};
+
+function logout(){ token = null; user = null; localStorage.clear(); start() }
+function go(v){ location.hash = v }
+window.onhashchange = () => user && show((location.hash || '#dashboard').slice(1));
+
+function start(){
+  if (!token || !user) {
+    $('#nav').style.display = 'none'; $('#who').innerHTML = '';
+    return authScreen('login');
+  }
+  $('#who').innerHTML = `${esc(user.name)} (${esc(user.role)}) <button class="s o" onclick="logout()">Logout</button>`;
+  $('#nav').style.display = '';
+  window.onhashchange();
+  if (!location.hash) go('dashboard');
+}
+
+function authScreen(mode){
+  const reg = mode === 'register';
+  $('#main').innerHTML = `<div class="card auth"><h2>${reg ? 'Create account' : 'Login'}</h2>
+  <form id="af">${reg ? '<label>Full name<input name="name" required></label>' : ''}
+  <label>Email<input name="email" type="email" required></label>
+  <label>Password<input name="password" type="password" minlength="6" required></label>
+  ${reg ? '<label>I am a<select name="role"><option value="customer">Customer</option><option value="owner">Business Owner</option><option value="provider">Service Provider</option></select></label>' : ''}
+  <p><button>${reg ? 'Register' : 'Login'}</button> <button type="button" class="o" onclick="authScreen('${reg ? 'login' : 'register'}')">${reg ? 'Back to login' : 'New user? Register'}</button></p></form>
+  ${reg ? '' : '<p class="mut">Demo: admin@demo.com/admin123 · owner@demo.com/owner123 · provider@demo.com/provider123 · customer@demo.com/customer123</p>'}</div>`;
+  $('#af').onsubmit = act(async e => {
+    e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
+    if (reg) { await api('/auth/register', 'POST', d); toast('Registered! Please login.'); authScreen('login') }
+    else { const r = await api('/auth/login', 'POST', d); token = r.token; user = r.user; localStorage.setItem('tok', token); localStorage.setItem('usr', JSON.stringify(user)); location.hash = 'dashboard'; start() }
+  });
+}
+
+async function show(v){
+  const menu = MENUS[user.role]; if (!menu.some(m => m[0] === v)) v = 'dashboard';
+  $('#nav').innerHTML = menu.map(m => `<a class="${m[0] === v ? 'on' : ''}" onclick="go('${m[0]}')">${m[1]}</a>`).join('');
+  try { $('#main').innerHTML = await VIEWS[v]() } catch(e) { $('#main').innerHTML = `<div class="card">Error: ${esc(e.message)}</div>`; return }
+  if (AFTER[v]) AFTER[v]();
+}
+const reload = () => show((location.hash || '#dashboard').slice(1));
+
+const VIEWS = {
+  async dashboard(){
+    const d = await api('/dashboard');
+    return `<h2>Dashboard</h2><div class="cards">${Object.entries(d.cards).map(([k, v]) => `<div class="stat"><small>${k}</small><div>${/Revenue|Spent/.test(k) ? money(v) : v}</div></div>`).join('')}</div>
+    <div class="grid2"><div class="card"><h3>${d.chart.title}</h3>${bars(d.chart.data)}</div>${user.role === 'customer' || user.role === 'provider' ? '' : `<div class="card"><h3>${d.chart2.title}</h3>${bars(d.chart2.data)}</div>`}</div>
+    <div class="card"><h3>Recent bookings</h3>${table([['ID', r => r.id], ['Service', r => esc(r.service_name)], ['Customer', r => esc(r.customer_name)], ['Date', r => r.date + ' ' + r.time], ['Status', r => badge(r.status)]], d.recent)}</div>`;
+  },
+  async businesses(){
+    const rows = await api('/businesses'); const r = user.role;
+    const form = r === 'owner' ? `<div class="card"><h3>Register a business</h3><form class="row" id="bf"><label>Name<input name="name" required></label>
+      <label>Category<input name="category" list="cats" required><datalist id="cats"><option>Beauty<option>Home Repair<option>Education<option>Health<option>Food<option>Fitness</datalist></label>
+      <label>Location<input name="location" required></label><label>Description<input name="description"></label><button>Register</button></form></div>` : '';
+    const cols = [['ID', x => x.id], ['Business', x => esc(x.name)], ['Category', x => esc(x.category)], ['Location', x => esc(x.location)], ['Owner', x => esc(x.owner_name)], ['Status', x => badge(x.status)]];
+    if (r === 'admin') cols.push(['Action', x => `<button class="s g" onclick="setBiz(${x.id},'verified')">Verify</button><button class="s r" onclick="setBiz(${x.id},'rejected')">Reject</button>`]);
+    return `<h2>${r === 'owner' ? 'My Businesses' : 'Businesses'}</h2>${form}<div class="card">${table(cols, rows)}</div>`;
+  },
+  async services(){
+    const r = user.role, p = new URLSearchParams(window.svcQ || {});
+    const rows = await api('/services?' + p);
+    let top = '';
+    if (r === 'customer') {
+      top = `<div class="card"><form class="row" id="sf"><label>Search<input name="q" value="${esc((window.svcQ || {}).q)}"></label><label>Category<input name="category" value="${esc((window.svcQ || {}).category)}"></label>
+        <label>Location<input name="location" value="${esc((window.svcQ || {}).location)}"></label><button>Search</button></form></div><div id="bk"></div>`;
+    }
+    if (r === 'owner') {
+      const [bz, us] = await Promise.all([api('/businesses'), api('/users')]);
+      top = `<div class="card"><h3>Add a service</h3>${bz.some(b => b.status === 'verified') ? '' : '<p class="mut">You need a verified business first.</p>'}
+      <form class="row" id="svf"><label>Business<select name="business_id">${bz.filter(b => b.status === 'verified').map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select></label>
+      <label>Service name<input name="name" required></label><label>Price (₹)<input name="price" type="number" min="0" step="1" required></label><label>Location<input name="location" required></label>
+      <label>Availability<input name="availability" placeholder="Mon-Sat 09:00-18:00"></label>
+      <label>Provider<select name="provider_id"><option value="">-- none --</option>${us.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
+      <label>Description<input name="description"></label><button>Add</button></form></div>`;
+    }
+    const cols = [['ID', x => x.id], ['Service', x => esc(x.name)], ['Business', x => esc(x.business_name)], ['Category', x => esc(x.category)], ['Location', x => esc(x.location)],
+      ['Price', x => money(x.price)], ['Availability', x => esc(x.availability)], ['Rating', x => x.avg_rating ? '★ ' + x.avg_rating : '-']];
+    if (r === 'customer') cols.push(['', x => `<button class="s" onclick="bookForm(${x.id},'${esc(x.name).replace(/'/g, '')}')">Book</button>`]);
+    if (r === 'owner') { cols.push(['Active', x => badge(x.active ? 'verified' : 'cancelled')]); cols.push(['Action', x => `<button class="s o" onclick="editPrice(${x.id},${x.price})">Price</button><button class="s ${x.active ? 'r' : 'g'}" onclick="toggleSvc(${x.id},${x.active})">${x.active ? 'Deactivate' : 'Activate'}</button>`]) }
+    return `<h2>${r === 'customer' ? 'Find & Book Services' : 'Services'}</h2>${top}<div class="card">${table(cols, rows)}</div>`;
+  },
+  async bookings(){
+    const rows = await api('/bookings'), r = user.role;
+    const cols = [['ID', x => x.id], ['Service', x => esc(x.service_name)], ['Business', x => esc(x.business_name)], ['Customer', x => esc(x.customer_name)], ['When', x => x.date + ' ' + x.time],
+      ['Amount', x => money(x.amount)], ['Status', x => badge(x.status)], ['Payment', x => badge(x.payment_status)]];
+    cols.push(['Actions', x => {
+      const open = x.status === 'pending' || x.status === 'confirmed';
+      if (r === 'customer') return (open ? `<button class="s o" onclick="resched(${x.id})">Reschedule</button><button class="s r" onclick="setBk(${x.id},'cancelled')">Cancel</button>` : '') +
+        (x.payment_status === 'unpaid' && x.status !== 'cancelled' ? `<button class="s g" onclick="payBk(${x.id})">Pay</button>` : '') +
+        (x.status === 'completed' ? `<button class="s" onclick="rate(${x.id})">Review</button>` : '');
+      return (x.status === 'pending' ? `<button class="s g" onclick="setBk(${x.id},'confirmed')">Confirm</button>` : '') + (x.status === 'confirmed' ? `<button class="s" onclick="setBk(${x.id},'completed')">Complete</button>` : '') + (open ? `<button class="s r" onclick="setBk(${x.id},'cancelled')">Cancel</button>` : '');
+    }]);
+    return `<h2>${r === 'customer' ? 'My Bookings' : r === 'provider' ? 'My Jobs' : 'Bookings'}</h2><div class="card">${table(cols, rows)}</div>`;
+  },
+  async payments(){
+    const rows = await api('/payments');
+    return `<h2>Payments</h2><div class="card">${table([['ID', x => x.id], ['Booking', x => x.booking_id], ['Service', x => esc(x.service_name)], ['Customer', x => esc(x.customer_name)], ['Amount', x => money(x.amount)], ['Method', x => esc(x.method)], ['Status', x => badge(x.status)], ['Date', x => x.created_at]], rows)}</div>`;
+  },
+  async reviews(){
+    const rows = await api('/reviews');
+    return `<h2>Customer Feedback</h2><div class="card">${table([['Customer', x => esc(x.customer_name)], ['Service', x => esc(x.service_name)], ['Business', x => esc(x.business_name)], ['Rating', x => '★'.repeat(x.rating)], ['Comment', x => esc(x.comment)], ['Date', x => x.created_at]], rows)}</div>`;
+  },
+  async reports(){
+    return `<h2>Reports</h2><div class="card"><div class="bar-actions noprint"><select id="rn">
+      <option value="business-registration">Business Registration Report</option><option value="service-booking">Service Booking Report</option>
+      <option value="revenue">Revenue Report</option><option value="customer-feedback">Customer Feedback Report</option></select>
+      <button onclick="loadReport()">View</button><button class="o" onclick="exportCsv()">Export CSV</button><button class="o" onclick="window.print()">Print</button></div><div id="rt"></div></div>`;
+  },
+  async users(){
+    const rows = await api('/users');
+    return `<h2>Users</h2><div class="card">${table([['ID', x => x.id], ['Name', x => esc(x.name)], ['Email', x => esc(x.email)], ['Role', x => badge(x.role)], ['Joined', x => x.created_at]], rows)}</div>`;
+  }
+};
+
+const AFTER = {
+  businesses(){ const f = $('#bf'); if (f) f.onsubmit = act(async e => { e.preventDefault(); const r = await api('/businesses', 'POST', Object.fromEntries(new FormData(e.target))); toast(r.message); reload() }) },
+  services(){
+    const s = $('#sf'); if (s) s.onsubmit = e => { e.preventDefault(); window.svcQ = Object.fromEntries(new FormData(e.target)); Object.keys(window.svcQ).forEach(k => !window.svcQ[k] && delete window.svcQ[k]); reload() };
+    const f = $('#svf'); if (f) f.onsubmit = act(async e => { e.preventDefault(); const r = await api('/services', 'POST', Object.fromEntries(new FormData(e.target))); toast(r.message); reload() });
+  },
+  reports(){ loadReport() }
+};
+
+window.setBiz = act(async (id, st) => { await api(`/businesses/${id}/status`, 'PUT', {status: st}); toast('Business ' + st); reload() });
+window.setBk = act(async (id, st) => { if (st === 'cancelled' && !confirm('Cancel this booking?')) return; await api(`/bookings/${id}/status`, 'PUT', {status: st}); toast('Booking ' + st); reload() });
+window.toggleSvc = act(async (id, a) => { await api(`/services/${id}`, 'PUT', {active: a ? 0 : 1}); reload() });
+window.editPrice = act(async (id, p) => { const v = prompt('New price (₹):', p); if (v === null) return; await api(`/services/${id}`, 'PUT', {price: v}); toast('Price updated'); reload() });
+window.resched = act(async id => { const d = prompt('New date (YYYY-MM-DD):'); if (!d) return; const t = prompt('New time (HH:MM, 24h):', '10:00'); if (!t) return; await api(`/bookings/${id}/reschedule`, 'PUT', {date: d, time: t}); toast('Rescheduled'); reload() });
+window.payBk = act(async id => { const m = prompt('Payment method (card / upi / netbanking / wallet):', 'upi'); if (!m) return; const r = await api(`/bookings/${id}/pay`, 'POST', {method: m.toLowerCase().trim()}); toast(r.message); reload() });
+window.rate = act(async id => { const n = prompt('Rating 1-5:', '5'); if (!n) return; const c = prompt('Comment (optional):') || ''; const r = await api('/reviews', 'POST', {booking_id: id, rating: n, comment: c}); toast(r.message); reload() });
+window.bookForm = (id, name) => {
+  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+  $('#bk').innerHTML = `<div class="card"><h3>Book: ${esc(name)}</h3><form class="row" id="bkf"><label>Date<input type="date" name="date" min="${tomorrow}" value="${tomorrow}" required></label>
+    <label>Time<input type="time" name="time" value="10:00" required></label><button>Confirm booking</button></form></div>`;
+  $('#bkf').onsubmit = act(async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(e.target)); d.service_id = id; const r = await api('/bookings', 'POST', d); toast(r.message); go('bookings') });
+  $('#bk').scrollIntoView({behavior: 'smooth'});
+};
+window.loadReport = act(async () => {
+  const rows = await api('/reports/' + $('#rn').value);
+  $('#rt').innerHTML = rows.length ? table(Object.keys(rows[0]).map(k => [k, r => esc(r[k])]), rows) : '<p class="mut">No data for this report.</p>';
+});
+window.exportCsv = act(async () => {
+  const n = $('#rn').value, r = await api(`/reports/${n}?format=csv`, 'GET', null, true), b = await r.blob(), a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = n + '.csv'; a.click();
+});
+window.logout = logout; window.go = go; window.authScreen = authScreen;
+start();
+</script>
+</body>
+</html>
