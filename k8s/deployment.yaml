@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marketplace
+  labels: {app: marketplace}
+spec:
+  replicas: 1          # SQLite is a single-file DB, keep 1 replica
+  selector:
+    matchLabels: {app: marketplace}
+  template:
+    metadata:
+      labels: {app: marketplace}
+    spec:
+      containers:
+        - name: web
+          image: local-marketplace:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          env:
+            - name: DB_PATH
+              value: /data/app.db
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef: {name: marketplace-secret, key: JWT_SECRET}
+          readinessProbe:
+            httpGet: {path: /api/health, port: 5000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /api/health, port: 5000}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: marketplace-pvc
